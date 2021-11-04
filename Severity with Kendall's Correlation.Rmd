@@ -1,0 +1,181 @@
+---
+title: "Severity correlations using Kendals method"
+author: "Chun-Yang Lin"
+date: "04/11/2021"
+output: html_document
+---
+
+# read the data set and select column names.
+
+```{r}
+suppressWarnings( library( tidyverse ) )
+TB <- read.csv( "../primaryData/MASTER Merge.csv", header = TRUE, na = "NA" )
+head( TB )
+colnames( TB )
+```
+
+# catalog the variables (RBD_IgG, BMI, Age, Days.post.Symptom.onset) into the dataframe
+```{r}
+TB <- TB %>% mutate( Response = cut( TB$RBD_IgG, breaks = c( 0, 30, 60, 90, 300 ), labels = c( 'None', 'Low', 'Medium', 'High' ), ordered_result = TRUE ) )
+TB <- TB %>% mutate( obese = cut( as.numeric( TB$BMI ), breaks = c( 0, 18.5, 25, 30, 100 ), labels = c( 'underweight', 'normal', 'overweight', 'obese' ), ordered_result = TRUE ) )
+TB <- TB %>% mutate( age = cut( TB$Age_at_enrollment, breaks = c( 0, 30, 45, 60, 100 ), labels = c( 'teenager', 'adult', 'senior', 'aged' ), ordered_result = TRUE ) )
+TB <- TB %>% mutate( interval = cut( as.numeric(TB$Days.post.First.Symptom.onset), breaks = c( -300, 5, 10, 20, 30, 300 ), labels = c( '1-5 days', '5-10 days', '10-20 days', '20-30 days', '>30 days' ), ordered_result = TRUE ) )
+```
+
+# define the cohort for the analysis
+
+```{r}
+severe <- TB %>% filter( Days.post.First.vax <= 0 | is.na(Days.post.First.vax) == TRUE ) %>%
+                 filter( Days.post.First.Symptom.onset >= 16 & Days.post.First.Symptom.onset <= 40 ) %>%
+                 select( contains('Ig') & !contains('_RBD'), Severity_second_update_1.5_scale, SJTRCID )
+head( severe )
+table( severe$Severity_second_update_1.5_scale, useNA = 'always')
+```
+
+# turn the data of Severity_second_update_1.5_scale into numeric data
+```{r}
+severe <- severe %>% mutate( Severity = as.numeric( Severity_second_update_1.5_scale )  )
+head( severe )
+```
+
+# pull out the antibody and severity data for the corelation test
+```{r}
+severeMx <- severe %>% select( RBD_IgG:HKU1_IgA, Severity ) %>% na.omit
+```
+
+# Test the correlation by Kendall method
+```{r}
+library( psych ) %>% suppressWarnings
+kendallcor <- corr.test( severeMx, method = "kendall", adjust = "fdr" )
+adjust.p <- kendallcor$p[ which( rownames(kendallcor$p) == "Severity" ), ]
+```
+
+# complie the data
+```{r}
+Ab <- NULL
+correlation <- NULL
+pvalue <- NULL
+
+for( n in 1:21 )
+    {
+    df <- cbind( severe[n], severe$Severity ) %>% na.omit
+    test <- cor.test(df[,1],df[,2], method= "kendall" )
+    Ab <- append( Ab, colnames( df[1] ) )
+    correlation <- append( correlation, test$estimate )
+    pvalue <- append( pvalue, test$p.value )
+}
+correlation <- data.frame( Ab, 'coefficients' = round(correlation,4), 'p.value' = round(pvalue,6) )
+
+severeDF <- cbind( correlation, "adjust.p" = adjust.p[1:21] ) %>% separate( 'Ab', into = c("antigen", "isotype"), sep = "_" )
+df <- severeDF %>% arrange( adjust.p )
+df
+write.csv( df, "../processedData/severeDF.csv")
+```
+
+# transform the table for plotting
+```{r}
+severeMx <- severeDF[1:3] %>% pivot_wider( names_from = isotype, values_from = coefficients ) %>% as.data.frame
+severeMx
+rownames( severeMx ) <- severeMx$antigen
+```
+
+# heatmap plotting
+```{r}
+options(repr.plot.width=6, repr.plot.height=5)
+library( RColorBrewer ) %>% suppressWarnings
+library( gplots ) %>% suppressWarnings
+coul <- colorRampPalette( rev( brewer.pal(8, "Spectral") ) )(25)
+heatmap.2(as.matrix( severeMx[2:4] ), scale = "none", col = coul, dendrogram = 'row', Colv = FALSE,
+          key.xlab = "coefficients", trace = "none", density.info = "none")
+```
+
+# pull out the antibody and severity data for the corelation test
+```{r}
+severeMx <- severe %>% select( RBD_IgG:HKU1_IgA, Severity ) %>% na.omit
+```
+
+# the significance examination by "LCTnorm"
+```{r}
+library( TestCor )
+FdrCor <- ApplyFdrCor( severeMx, alpha = 0.05, stat_test = "fisher", method = "LCTnorm", 
+                       Nboot = 1000, vect = FALSE, arr.ind = TRUE )
+```
+# find the coresponding antibody of the significance
+```{r}
+FdrCor[ which( FdrCor[,2] == 22 ), ] %>% as.data.frame.matrix %>% mutate( 'Ab' = colnames( severeMx[ row ] ) )
+```
+
+# the stripchart of IgG and severity
+```{r}
+Mx <- severe %>% select( contains( "IgG" ), Severity ) %>%
+      pivot_longer( RBD_IgG:HKU1_IgG, names_to = "Ab", values_to = "units" ) %>% 
+      separate( 'Ab', into = c("antigen", "isotype"), sep = "_" )
+Mx$antigen <- factor( Mx$antigen, levels = c( "RBD", "Spike", "N", "OC43", "HKU1", "NL63", "X229E" ) )
+
+options(repr.plot.width=18, repr.plot.height=3)
+p1 <- ggplot( Mx, aes( x = Severity, y = units, col = antigen ) ) +
+   geom_jitter( width = 0.2 ) +
+   stat_summary( fun ="mean", geom="crossbar", width=0.5, col = "blue" ) +
+   ylab( "IgG percent ratio" ) +
+   theme( rect = element_rect(fill = "transparent") )+
+   facet_wrap( ~antigen, nrow = 1 )
+```
+
+# the stripchart of IgG and severity
+```{r}
+Mx <- severe %>% select( contains( "IgM" ), Severity ) %>%
+      pivot_longer( RBD_IgM:HKU1_IgM, names_to = "Ab", values_to = "units" ) %>% 
+      separate( 'Ab', into = c("antigen", "isotype"), sep = "_" ) 
+Mx$antigen <- factor( Mx$antigen, levels = c( "RBD", "Spike", "N", "OC43", "HKU1", "NL63", "X229E" ) )
+
+options(repr.plot.width=18, repr.plot.height=3)
+p2 <- ggplot( Mx, aes( x = Severity, y = units, col = antigen ) ) +
+   geom_jitter( width = 0.2 ) +
+   stat_summary( fun ="mean", geom="crossbar", width=0.5, col = "blue" ) +
+   ylab( "IgM percent ratio" ) +
+   theme( rect = element_rect(fill = "transparent") )+
+   facet_wrap( ~antigen, nrow = 1 )
+```
+
+# the stripchart of IgG and severity
+
+```{r}
+Mx <- severe %>% select( contains( "IgA" ), Severity ) %>%
+      pivot_longer( RBD_IgA:HKU1_IgA, names_to = "Ab", values_to = "units" ) %>% 
+      separate( 'Ab', into = c("antigen", "isotype"), sep = "_" )
+Mx$antigen <- factor( Mx$antigen, levels = c( "RBD", "Spike", "N", "OC43", "HKU1", "NL63", "X229E" ) )
+
+options(repr.plot.width=18, repr.plot.height=3)
+p3 <- ggplot( Mx, aes( x = Severity, y = units, col = antigen ) ) +
+   geom_jitter( width = 0.2 ) +
+   stat_summary( fun ="mean", geom="crossbar", width=0.5, col = "blue" ) +
+   ylab( "IgA percent ratio" ) +
+   theme( rect = element_rect(fill = "transparent") )+
+   facet_wrap( ~antigen, nrow = 1 )
+
+library(ggpubr)
+options(repr.plot.width=16, repr.plot.height=8)
+ggarrange(p1,p2,p3, ncol = 1 )
+
+options(repr.plot.width=8, repr.plot.height=8)
+par(mfrow=c(3,3))
+for( n in 1:9 )
+    {
+    df <- cbind( severe[n], as.numeric( severe$Severity ) ) %>% na.omit
+    stripchart( df[,1]~df[,2], method = 'jitter', vertical = T, ylab = colnames(df[1]), xlab = 'severity scale' )
+#    abline( b = severeDF[ which( rownames( severeDF ) == colnames(df[1]) ),3]*mean( df[ which( df[,2] == 1 ) ,1], rm.na = TRUE ), 
+#            a = mean( df[ which( df[,2] == 1 ) ,1], rm.na = TRUE ) )
+}
+
+options(repr.plot.width=10.5, repr.plot.height=8)
+par(mfrow=c(3,4))
+for( n in 10:21 )
+    {
+    df <- cbind( severe[n], as.numeric( severe$Severity ) ) %>% na.omit
+    stripchart( df[,1]~df[,2], method = 'jitter', vertical = T, ylab = colnames(df[1]), xlab = 'severity scale' )
+#    abline( b = severeDF[ which( rownames( severeDF ) == colnames(df[1]) ),3 ]*mean( df[ which( df[,2] == 1 ) ,1], rm.na = TRUE ), 
+#            a = mean( df[ which( df[,2] == 1 ) ,1], rm.na = TRUE ) )
+}
+
+sessionInfo()
+```

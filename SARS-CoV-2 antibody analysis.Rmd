@@ -1,0 +1,723 @@
+---
+title: "SARS-CoV-2 Antibody Analysis"
+author: "Macauley Locke"
+date: "09/06/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Introduction
+
+The following document has been generated to provide methodology used to obtain statistics shown within the paper "Pre-existing humoral immunity to common human coronaviruses negatively impacts the protective SARS-CoV-2 antibody response" summarizing antibody responses during SARS-COV-2 infections and vaccination. The following analysis has been undertaken by Macauley Locke (University of Leeds) and Chun-Yang Lin (St Jude children hospital) supervised by Charles Taylor (University of Leeds), Maureen Mcgargill (St Jude Children hospital) and Carmen Molina Paris (University of Leeds & Los Alasmos National Laboratory). This longitudinal study examines staff at the hospital taking into account not only those who have been infected with SARS-COV-2 but also vaccine responses. Please also see file "Severity_Kendall.r" for analysis of correlations between severity and antibody response.
+
+
+## Package load
+
+Personal standard packages to be loaded. Not all packages will be called on within this script.
+
+```{r,warning=FALSE}
+library(car);
+library(excel.link);
+library(ggfortify);
+#library(pca3d);
+library(factoextra);
+library("FactoMineR");
+library(corrplot);
+library(Hmisc);
+library(plotly);
+library(MVN);
+library(psych);
+library(tidyr);
+library(tidyverse);
+library(energy);
+library(ggplot2);
+library(ggjoy);
+library(dplyr);
+library(data.table);
+library(viridis);
+library("PerformanceAnalytics");
+library(TestCor)
+library(readxl)
+```
+
+Set working directory
+
+```{r}
+setwd("/Users/macau/Documents/St Jude HLA Data/Antibody Data")
+```
+
+Read in data for Antibody study complete
+
+```{r}
+Antibody_Data<-as.data.frame(read_excel("Complete_antibody_data_St_Jude28072021 Corrected.xlsx"))
+
+```
+Read data for Pfizer vaccine data only. This is due to samples for this vaccine being significantly larger than other vaccines presented within this study. Pfizer=261.
+
+```{r}
+Vaccine_Data<-as.data.frame(read_excel("Complete_antibody_data_St_Jude28072021 Corrected.xlsx",sheet = "Only Pfizer with CCOV"))
+```
+
+
+Remove first column with update for antibody dataframe
+```{r}
+Antibody_Data<-subset(Antibody_Data, select = -c(1) )
+```
+
+Remove first column with update for Vaccine dataframe
+```{r}
+Vaccine_Data<-subset(Vaccine_Data, select = -c(1) )
+```
+
+
+Identify column index for use in work.
+```{r}
+
+col_list=c(which(colnames(Antibody_Data)=="SJTRCID"),
+           which(colnames(Antibody_Data)=="Sample type"),
+           which(colnames(Antibody_Data)=="Days post Last Vax"),
+           which(colnames(Antibody_Data)=="RBD_IgG"),
+           which(colnames(Antibody_Data)=="Spike_IgG"),
+           which(colnames(Antibody_Data)=="N_IgG"),
+           which(colnames(Antibody_Data)=="RBD_IgM"),
+           which(colnames(Antibody_Data)=="Spike_IgM"),
+           which(colnames(Antibody_Data)=="N_IgM"),
+           which(colnames(Antibody_Data)=="RBD_IgA"),
+           which(colnames(Antibody_Data)=="Spike_IgA"),
+           which(colnames(Antibody_Data)=="N_IgA"),
+           which(colnames(Antibody_Data)=="OC43_IgG"),
+           which(colnames(Antibody_Data)=="NL63_IgG"),
+           which(colnames(Antibody_Data)=="229E_IgG"),
+           which(colnames(Antibody_Data)=="HKU1_IgG"),
+           which(colnames(Antibody_Data)=="OC43_IgM"),
+           which(colnames(Antibody_Data)=="NL63_IgM"),
+           which(colnames(Antibody_Data)=="229E_IgM"),
+           which(colnames(Antibody_Data)=="HKU1_IgM"),
+           which(colnames(Antibody_Data)=="OC43_IgA"),
+           which(colnames(Antibody_Data)=="NL63_IgA"),
+           which(colnames(Antibody_Data)=="229E_IgA"),
+           which(colnames(Antibody_Data)=="HKU1_IgA"))
+```
+
+# Question 1 
+## Correlations between CCOV at Baseline and Acute and Convalescent samples taken from 16-40 days post symptom onset
+
+
+Extract individuals who have not received a vaccine based on last vaccine day column, and who have symptom onset reported between 16-40 days
+```{r}
+
+#Extract all Baseline readings
+Baseline<-Antibody_Data[Antibody_Data$`Sample type`=="Baseline",col_list]
+
+#Extract Acute and Convalescent Samples with Symptom onset between 16-40 Days
+Acute_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Acute" & Antibody_Data$`Days post First Symptom onset`>15 & Antibody_Data$`Days post First Symptom onset`<41 & Antibody_Data$`Days post Last vax`<0,col_list]
+Convalescent_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Convalescent" & Antibody_Data$`Days post First Symptom onset`>15 & Antibody_Data$`Days post First Symptom onset`<41 & Antibody_Data$`Days post Last vax`<0,col_list]
+
+Acute_temp<-Acute_temp[complete.cases(Acute_temp),]
+Convalescent_temp<-Convalescent_temp[complete.cases(Convalescent_temp),]
+Infectives<-rbind(Acute_temp,Convalescent_temp)
+
+Merged<- merge(y=Infectives, x=Baseline, by="SJTRCID", all=TRUE,suffixes = c(".Baseline",".Infectives"));
+
+Finalset<-Merged[complete.cases(Merged),]
+
+```
+
+Pairs panels with linear regression models fitted for RBD & SPike for IgG
+```{r}
+temp<-Finalset[,c(14,13,12,15,16,18,17,19,20,22,21,23,25,26,27)]
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 2,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1,
+vect = FALSE,
+arr.ind = FALSE
+)
+```
+
+Pairs panels with linear regression models fitted for RBD & SPike for IgM
+```{r}
+temp<-Finalset[,c(14,13,12,15,16,18,17,19,20,22,21,23,28,29,30)]
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+```
+
+Pairs panels with linear regression models fitted for RBD & SPike for IgA
+```{r}
+temp<-Finalset[,c(14,13,12,15,16,18,17,19,20,22,21,23,31,32,33)]
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+
+```
+
+# Question 2 
+## Correlations between CCOV at Baseline percentge boost and Acute and Convalescent samples taken from 16-40 days post symptom onset
+
+
+Extract indiviudals who have not recieved a vaccine based on last vaccine day column, and who have results reported between 16-40 days. Calculate boost for each patient.
+```{r}
+
+#Extract all Baseline readings
+Baseline<-Antibody_Data[Antibody_Data$`Sample type`=="Baseline",col_list]
+
+#Extract Acute and Convalescent Samples with Symptom onset between 16-40 Days
+Acute_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Acute" & Antibody_Data$`Days post First Symptom onset`>15 & Antibody_Data$`Days post First Symptom onset`<41& Antibody_Data$`Days post Last vax`<0,col_list]
+Convalescent_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Convalescent" & Antibody_Data$`Days post First Symptom onset`>15 & Antibody_Data$`Days post First Symptom onset`<41 & Antibody_Data$`Days post Last vax`<0,col_list]
+
+Acute_temp<-Acute_temp[complete.cases(Acute_temp),]
+Convalescent_temp<-Convalescent_temp[complete.cases(Convalescent_temp),]
+Infectives<-rbind(Acute_temp,Convalescent_temp)
+
+Merged<- merge(y=Infectives, x=Baseline, by="SJTRCID", all=TRUE,suffixes = c(".Baseline",".Infectives"));
+
+Finalset<-Merged[complete.cases(Merged),]
+
+#Boost IgG
+Finalset$OC34IgGBoost<-(Finalset[,34]-Finalset[,12])/Finalset[,12]
+Finalset$NL63IgGBoost<-(Finalset[,35]-Finalset[,13])/Finalset[,13]
+Finalset$`229EIgGBoost`<-(Finalset[,36]-Finalset[,14])/Finalset[,14]
+Finalset$`HKU1IgGBoost`<-(Finalset[,37]-Finalset[,15])/Finalset[,15]
+
+#Boost IgM
+Finalset$`OC43IgMBoost`<-(Finalset[,38]-Finalset[,16])/Finalset[,16]
+Finalset$NL63IgMBoost<-(Finalset[,39]-Finalset[,17])/Finalset[,17]
+Finalset$`229EIgMBoost`<-(Finalset[,40]-Finalset[,18])/Finalset[,18]
+Finalset$`HKU1IgMBoost`<-(Finalset[,41]-Finalset[,19])/Finalset[,19]
+
+#Boost IgA
+Finalset$`OC43IgABoost`<-(Finalset[,42]-Finalset[,20])/Finalset[,20]
+Finalset$NL63IgABoost<-(Finalset[,43]-Finalset[,21])/Finalset[,21]
+Finalset$`229EIgABoost`<-(Finalset[,44]-Finalset[,22])/Finalset[,22]
+Finalset$`HKU1IgABoost`<-(Finalset[,45]-Finalset[,23])/Finalset[,23]
+```
+
+CCOV Boost from baseline to Acute/Convalescent compared to IgG Acute/Convalescent
+```{r}
+temp<-Finalset[,c(46,47,48,49,50,51,52,53,54,55,56,57,25,26,27)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+```
+
+CCOV Boost from baseline to Acute/Convalescent compared to IgM Acute/Convalescent
+```{r}
+temp<-Finalset[,c(46,47,48,49,50,51,52,53,54,55,56,57,28,29,30)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+
+```
+
+CCOV Boost from baseline to Acute/Convalescent compared to IgA Acute/Convalescent
+```{r}
+temp<-Finalset[,c(46,47,48,49,50,51,52,53,54,55,56,57,31,32,33)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+
+
+```
+
+#Question 3
+## Examine boost 1-15 days post sympton onset
+
+Extract indiviudals who have not recieved a vaccine based on last vaccine day column, and who have results reported between 16-40 days
+```{r}
+
+#Extract all Baseline readings
+Baseline<-Antibody_Data[Antibody_Data$`Sample type`=="Baseline",col_list]
+
+#Extract Acute and Convalescent Samples with Symptom onset between 1-5 Days
+Acute_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Acute" & Antibody_Data$`Days post First Symptom onset`>0 & Antibody_Data$`Days post First Symptom onset`<16& Antibody_Data$`Days post Last vax`<0,col_list]
+Convalescent_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Convalescent" & Antibody_Data$`Days post First Symptom onset`>0 & Antibody_Data$`Days post First Symptom onset`<16 ,col_list]
+
+Acute_temp<-Acute_temp[complete.cases(Acute_temp),]
+Convalescent_temp<-Convalescent_temp[complete.cases(Convalescent_temp),]
+Infectives<-rbind(Acute_temp,Convalescent_temp)
+
+Merged<- merge(y=Infectives, x=Baseline, by="SJTRCID", all=TRUE,suffixes = c(".Baseline",".Infectives"));
+
+Finalset<-Merged[complete.cases(Merged),]
+
+#Boost IgG
+Finalset$OC34IgGBoost<-(Finalset[,34]-Finalset[,12])/Finalset[,12]
+Finalset$NL63IgGBoost<-(Finalset[,35]-Finalset[,13])/Finalset[,13]
+Finalset$`229EIgGBoost`<-(Finalset[,36]-Finalset[,14])/Finalset[,14]
+Finalset$`HKU1IgGBoost`<-(Finalset[,37]-Finalset[,15])/Finalset[,15]
+
+#Boost IgM
+Finalset$`OC43IgMBoost`<-(Finalset[,38]-Finalset[,16])/Finalset[,16]
+Finalset$NL63IgMBoost<-(Finalset[,39]-Finalset[,17])/Finalset[,17]
+Finalset$`229EIgMBoost`<-(Finalset[,40]-Finalset[,18])/Finalset[,18]
+Finalset$`HKU1IgMBoost`<-(Finalset[,41]-Finalset[,19])/Finalset[,19]
+
+#Boost IgA
+Finalset$`OC43IgABoost`<-(Finalset[,42]-Finalset[,20])/Finalset[,20]
+Finalset$NL63IgABoost<-(Finalset[,43]-Finalset[,21])/Finalset[,21]
+Finalset$`229EIgABoost`<-(Finalset[,44]-Finalset[,22])/Finalset[,22]
+Finalset$`HKU1IgABoost`<-(Finalset[,45]-Finalset[,23])/Finalset[,23]
+```
+
+
+CCOV Boost from baseline to Acute/Convalescent compared to IgG Acute/Convalescent
+```{r}
+temp<-Finalset[,c(46,47,48,49,50,51,52,53,54,55,56,57,25,26,27)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+
+
+```
+
+CCOV Boost from baseline to Acute/Convalescent compared to IgM Acute/Convalescent
+```{r}
+temp<-Finalset[,c(46,47,48,49,50,51,52,53,54,55,56,57,28,29,30)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.001,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+
+```
+
+
+CCOV Boost from baseline to Acute/Convalescent compared to IgA Acute/Convalescent
+```{r}
+temp<-Finalset[,c(46,47,48,49,50,51,52,53,54,55,56,57,31,32,33)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+ApplyFdrCor(
+temp,
+alpha = 0.0,
+stat_test = "fisher",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+```
+
+
+
+#Question 5
+## IgM as a predictor for IgG RBD and Spike
+
+```{r}
+#Extract all Baseline readings
+Baseline<-Antibody_Data[Antibody_Data$`Sample type`=="Baseline",c(1,5,16,23,24,25,26,27,28,29,30,31,37,38,39,40,41,42,43,44,45,46,47,48)]
+
+#Extract Acute and Convalescent Samples with Symptom onset between 16-40 Days
+Acute_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Acute" & Antibody_Data$`Days post First Symptom onset`>15 & Antibody_Data$`Days post First Symptom onset`<41 & Antibody_Data$`Days post Last vax`<0,c(1,5,16,23,24,25,26,27,28,29,30,31,37,38,39,40,41,42,43,44,45,46,47,48,8)]
+Convalescent_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Convalescent" & Antibody_Data$`Days post First Symptom onset`>15 & Antibody_Data$`Days post First Symptom onset`<41 ,c(1,5,16,23,24,25,26,27,28,29,30,31,37,38,39,40,41,42,43,44,45,46,47,48,8)]
+
+Acute_temp<-Acute_temp[complete.cases(Acute_temp),]
+Convalescent_temp<-Convalescent_temp[complete.cases(Convalescent_temp),]
+Infectives<-rbind(Acute_temp,Convalescent_temp)
+
+Merged<- merge(y=Infectives, x=Baseline, by="SJTRCID", all=TRUE,suffixes = c(".Baseline",".Infectives"));
+
+
+```
+
+Multiple Linear Regression for RBD_IgG
+```{r}
+linear_model_RBD<-lm(Finalset$RBD_IgG.Infectives ~ Finalset$OC43_IgM.Baseline + Finalset$HKU1_IgM.Baseline+Finalset$NL63_IgM.Baseline+Finalset$`229E_IgM.Baseline` + Finalset$`Days post First Symptom onset`, data = Finalset)
+summary(linear_model_RBD)
+
+
+```
+
+Multiple Linear Regression for Spike_IgG
+```{r}
+linear_model_RBD<-lm(Finalset$Spike_IgG.Infectives ~ Finalset$OC43_IgM.Baseline + Finalset$HKU1_IgM.Baseline+Finalset$NL63_IgM.Baseline+Finalset$`229E_IgM.Baseline` + Finalset$`Days post First Symptom onset`, data = Finalset)
+summary(linear_model_RBD)
+
+```
+
+Linear regression with best two predictors from previous model.
+```{r}
+
+linear_model_RBD<-lm(Finalset$Spike_IgG.Infectives ~ Finalset$`229E_IgM.Baseline` + Finalset$NL63_IgM.Baseline, data = Finalset)
+summary(linear_model_RBD)
+```
+
+# Question 5
+## Correlations between IgM CCOV sum at Baseline  Acute and Convalescent samples taken from 16-40 days post symptom onset
+
+
+Extract indiviudals who have not recieved a vaccine based on last vaccine day column, and who have results reported between 16-40 days
+```{r}
+
+#Extract all Baseline readings
+Baseline<-Antibody_Data[Antibody_Data$`Sample type`=="Baseline",col_list]
+
+#Extract Acute and Convalescent Samples with Symptom onset between 16-40 Days
+Acute_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Acute" & Antibody_Data$`Days post First Symptom onset`>15 & Antibody_Data$`Days post First Symptom onset`<41& Antibody_Data$`Days post Last vax`<0,col_list]
+Convalescent_temp<-Antibody_Data[Antibody_Data$`Sample type`=="Convalescent" & Antibody_Data$`Days post First Symptom onset`>15 & Antibody_Data$`Days post First Symptom onset`<41 ,col_list]
+
+Acute_temp<-Acute_temp[complete.cases(Acute_temp),]
+Convalescent_temp<-Convalescent_temp[complete.cases(Convalescent_temp),]
+Infectives<-rbind(Acute_temp,Convalescent_temp)
+
+Merged<- merge(y=Infectives, x=Baseline, by="SJTRCID", all=TRUE,suffixes = c(".Baseline",".Infectives"));
+
+Finalset<-Merged[complete.cases(Merged),]
+
+#Sum IgM
+Finalset$`SumIgM`<-(Finalset[,17]+Finalset[,18]+Finalset[,19]+Finalset[,20])
+
+```
+
+```{r}
+temp<-Finalset[,c(49,27,28,29,30,31,32,33,34,35)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+```
+
+
+
+# Question 6 
+## Correlations between CCOV at Baseline and PV samples 
+
+
+Extract indiviudals who have not recieved a vaccine based on last vaccine day column, and who have results reported between 16-40 days
+
+##Boost between postvaccine and baseline
+
+```{r}
+
+#Extract all Baseline readings
+Baseline<-Antibody_Data[Antibody_Data$`Sample type`=="Baseline" & Antibody_Data$`Confirmed COVID`==0,c(1,5,39,40,41,42,43,44,45,46,47,48,49,50)]
+
+post_vaccine<-Vaccine_Data[Vaccine_Data$`Days post Last vax`<86 ,col_list]
+
+Merged<- merge(y=post_vaccine, x=Baseline, by="SJTRCID", all=TRUE,suffixes = c(".Baseline",".PV"));
+
+Finalset<-Merged[complete.cases(Merged),]
+#Boost IgG
+Finalset$OC34IgGBoost<-(Finalset[,25]-Finalset[,3])/Finalset[,3]
+Finalset$NL63IgGBoost<-(Finalset[,26]-Finalset[,4])/Finalset[,4]
+Finalset$`229EIgGBoost`<-(Finalset[,27]-Finalset[,5])/Finalset[,5]
+Finalset$`HKU1IgGBoost`<-(Finalset[,28]-Finalset[,6])/Finalset[,6]
+
+#Boost IgM
+Finalset$`OC43IgMBoost`<-(Finalset[,29]-Finalset[,7])/Finalset[,7]
+Finalset$NL63IgMBoost<-(Finalset[,30]-Finalset[,8])/Finalset[,8]
+Finalset$`229EIgMBoost`<-(Finalset[,31]-Finalset[,9])/Finalset[,9]
+Finalset$`HKU1IgMBoost`<-(Finalset[,32]-Finalset[,10])/Finalset[,10]
+
+#Boost IgA
+Finalset$`OC43IgABoost`<-(Finalset[,33]-Finalset[,11])/Finalset[,11]
+Finalset$NL63IgABoost<-(Finalset[,34]-Finalset[,12])/Finalset[,12]
+Finalset$`229EIgABoost`<-(Finalset[,35]-Finalset[,13])/Finalset[,13]
+Finalset$`HKU1IgABoost`<-(Finalset[,36]-Finalset[,14])/Finalset[,14]
+```
+
+CCOV Baseline vs IgG Post vaccine response
+```{r}
+
+temp<-Finalset[,c(3,6,5,4,7,10,9,8,11,14,13,12,16,17,18)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 2,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "empirical",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+```
+
+CCOV Baseline vs IgM Post vaccine response
+
+```{r}
+temp<-Finalset[,c(3,6,5,4,7,10,9,8,11,14,13,12,19,20,21)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 2,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "empirical",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+```
+
+CCOV Baseline vs IgA Post vaccine response
+```{r}
+temp<-Finalset[,c(3,6,5,4,7,10,9,8,11,14,13,12,22,23,24)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 2,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "empirical",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+
+```
+
+CCOV Boost vs IgG Post vaccine response
+```{r}
+
+temp<-Finalset[,c(37,40,39,38,41,44,43,42,45,48,47,46,16,17,18)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "empirical",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+```
+
+CCOV Boost vs IgM Post vaccine response
+```{r}
+
+temp<-Finalset[,c(37,40,39,38,41,44,43,42,45,48,47,46,19,20,21)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "empirical",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+```
+CCOV Boost vs IgA Post vaccine response
+```{r}
+
+temp<-Finalset[,c(37,40,39,38,41,44,43,42,45,48,47,46,22,23,24)]
+
+pairs.panels(temp, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE,  # show correlation ellipses
+             cor = TRUE,
+             stars = TRUE,
+             cex.cor = 3,
+             lm=TRUE)
+
+ApplyFdrCor(
+temp,
+alpha = 0.05,
+stat_test = "empirical",
+method = "LCTnorm",
+Nboot = 1000,
+vect = FALSE,
+arr.ind = FALSE
+)
+
+
+
+```
+
