@@ -11,6 +11,6 @@ Please make sure any packages used within each file provided are installed.
 
 ### Disclaimer
 
-Some file names may need to be changed to match any provided by the author. We will also not be maintaining these codes, so they cease to work with newer releases of R or associated packages.
+Some file names may need to be changed to match any provided by the author. We will also not be maintaining these codes. Codes may fail with newer releases of R or associated packages.
 
 
